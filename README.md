@@ -47,24 +47,23 @@ xvfb-run -a node scripts/publish.js
 #           (never submit a game with self-made/fallback assets)
 ```
 
-Generate compliant assets with FREE AI (no account, no API key — FLUX via anonymous HF Spaces API):
+Generate compliant assets by **capturing REAL GAMEPLAY of the very build you submit** (QA rejected 3 games whose AI assets did not match the tested game):
 
 ```bash
 pip install pillow
-python3 scripts/gen_assets.py \
-  --prompt "a cartoon moving truck loaded with cardboard boxes driving up a sunny \
-hilly road toward a new house, vibrant colors, clean vector style" \
-  --out-dir ./assets
+xvfb-run -a node scripts/capture_assets.js --zip my-game-v1.0.0.zip --out-dir ./assets
 # -> assets/icon_256.png (256x256, <=1MB) + assets/cover_1360x850.png (1360x850, <=1.5MB)
 ```
 
-- `--prompt` = visual description of the game only; **assets carry no text/name/logo** (a ban-suffix is appended automatically).
-- The script always writes an `ASSETS_SOURCE` file next to the assets: `assets_ai_generated` (real FLUX output) or `assets_pil_fallback` (placeholder).
-- If the anonymous GPU quota is busy, the script retries with backoff across two FLUX Spaces, optionally uses `HF_TOKEN` (free account), and finally falls back to PIL-drawn assets so the draft can be completed.
-- **PIL fallback assets must NEVER be submitted**: `publish.js` reads the marker and refuses "Submit for review" (exit code 2) unless assets are proven AI-generated. Retry the AI generation later (rolling quota) and re-run `publish.js`.
-- To raise the anonymous quota, set `HF_TOKEN=<your free token>` or put the token in a git-ignored `scripts/.hf_token` file (never commit a raw token to a public repo — HF auto-revokes leaked tokens).
+- The build is auto-started and given a settle window — **menu/loading frames are never used**: flat frames and HUD-text-heavy frames are dropped by the post-process.
+- Crops are **full-bleed with square corners** (rounded-corner icons are a QA auto-reject), pixel-probed on all 4 corners.
+- `--dir <unpacked-build>`, `--settle`, `--frames`, `--interval`, `--width/--height` (for portrait games) tune the capture.
+- The script writes `ASSETS_SOURCE=assets_gameplay_capture`, the ONLY provenance `publish.js` accepts at Submit.
+- `scripts/gen_assets.py` (FLUX AI) remains as an **emergency fallback** when no build exists to capture — its output is blocked at Submit (`assets_ai_generated`), same as PIL fallbacks.
 
 ## What the script verifies
+
+(plus the pre-QA gates: SDK-as-first-script in the zipped `index.html` before the `sdkIntegration` flag is set / Submit; assets accepted only with `ASSETS_SOURCE=assets_gameplay_capture`)
 
 - `PUT api.gamepix.com/v3/devs/game-drafts/<ns>` 200 — form saved
 - `POST api.gamepix.com/v3/devs/game-drafts/upload/asset` 200 ×2 — icon + cover
@@ -75,10 +74,12 @@ hilly road toward a new house, vibrant colors, clean vector style" \
 ## Files
 
 - `SKILL.md` — the actual skill (platform knowledge + step-by-step)
-- `scripts/publish.js` — one-shot end-to-end publisher (**blocks Submit for review if assets are not AI-generated** — exit code 2)
-- `scripts/bridges/poki_bridge.js` — AD BRIDGE: PokiSDK games get REAL GamePix ads (commercialBreak→interstitialAd, rewardedBreak→rewardAd, happyTime→happyMoment)
-- `scripts/bridges/snacks_bridge.js` — AD BRIDGE: GameSnacks games get REAL GamePix ads (ad.break next/reward→interstitial/reward, score.update→updateScore, levelComplete→updateLevel+happyMoment, game.ready→loaded)
-- `scripts/gen_assets.py` — FREE AI asset generator (FLUX via anonymous HF Spaces API, text-free, GamePix-compliant, writes the `ASSETS_SOURCE` provenance marker)
+- `scripts/publish.js` — one-shot end-to-end publisher (**blocks Submit for review** unless assets are proven gameplay captures of this build AND the SDK is verifiably integrated in the zip — exit code 2)
+- `scripts/capture_assets.js` — launches the REAL build, auto-starts past menus, captures gameplay frames (needs playwright + xvfb)
+- `scripts/capture_postprocess.py` — picks the most action-rich frames, full-bleed square-corner crops, exact GamePix specs, writes `ASSETS_SOURCE=assets_gameplay_capture`
+- `scripts/bridges/poki_bridge.js` — AD BRIDGE: PokiSDK games get REAL GamePix ads (commercialBreak→interstitialAd, rewardedBreak→rewardAd, happyTime→happyMoment) **+ audio-safe shim: bridges themselves suspend all AudioContexts and pause audio/video elements during every ad break**
+- `scripts/bridges/snacks_bridge.js` — AD BRIDGE: GameSnacks games get REAL GamePix ads (ad.break next/reward→interstitial/reward, score.update→updateScore, levelComplete→updateLevel+happyMoment, game.ready→loaded) **+ same audio-safe shim**
+- `scripts/gen_assets.py` — FALLBACK ONLY: FREE AI asset generator (FLUX via anonymous HF Spaces API, full-bleed prompts + square-corner check, writes the `ASSETS_SOURCE` provenance marker) — output blocked at Submit
 - `scripts/make_assets.py` — offline PIL fallback (also text-free; draft completion only — never submit with these)
 
 ## REVIEW LOCK (important)

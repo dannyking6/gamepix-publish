@@ -70,13 +70,19 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const log = (...a) => console.log('[GPX]', ...a);
 const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-// ---------- AI-ASSET ENFORCEMENT -------------------------------------------
-// HARD RULE: never submit a game whose icon/cover are not real AI generations
-// (no PIL/hand-drawn placeholders). gen_assets.py writes an ASSETS_SOURCE file
-// next to the assets: "assets_ai_generated" (OK) or "assets_pil_fallback" (blocked).
+// ---------- ASSET ENFORCEMENT (gameplay captures) --------------------------
+let SDK_GATE = { skipped: true, ok: true }; // set by verifySdkInZip in main()
+// HARD RULE (from repeated QA rejections "assets not corresponding to the game
+// tested" + "icon has rounded corners"): icon/cover must be REAL captures of the
+// build being submitted, full-bleed square corners, no menu frames, no AI imagi-
+// nation. capture_assets.js writes an ASSETS_SOURCE marker next to the assets:
+//   assets_gameplay_capture  (OK — screenshots of this very build)
+//   assets_pil_fallback      (blocked — placeholder drawings)
+//   assets_ai_generated      (blocked by default — did not match the game in QA)
 const AI_MARKER = 'ASSETS_SOURCE';
-const ASSET_SOURCE_AI = 'assets_ai_generated';
+const ASSET_SOURCE_OK = 'assets_gameplay_capture';
 const ASSET_SOURCE_PIL = 'assets_pil_fallback';
+const ASSET_SOURCE_AI = 'assets_ai_generated';
 
 function assetSource(iconPath, coverPath) {
   for (const p of [iconPath, coverPath]) {
@@ -108,26 +114,77 @@ async function warnBeforeSubmit(ctx, page, ns) {
     log('Continuing anyway (you may complete these later once the game is back in EDIT).');
   }
   const a = assetSource(CFG.icon, CFG.cover);
-  if (a && a.src !== ASSET_SOURCE_AI) {
-    const reason = a.src === ASSET_SOURCE_PIL
-      ? 'assets are PIL FALLBACK (ASSETS_SOURCE=' + ASSET_SOURCE_PIL + ' in ' + a.marker + ')'
-      : 'assets are not proven AI-generated (ASSETS_SOURCE=' + a.src + ')';
+  if ((a && a.src !== ASSET_SOURCE_OK) || (!SDK_GATE.skipped && !SDK_GATE.ok)) {
+    const reasons = [];
+    if (a && a.src !== ASSET_SOURCE_OK) {
+      reasons.push(a.src === ASSET_SOURCE_PIL
+        ? 'assets are PIL FALLBACK placeholders (never ship these)'
+        : a.src === ASSET_SOURCE_AI
+          ? 'assets are AI-GENERATED, not captures of THIS build (QA rejected 3 games for exactly this)'
+          : 'assets are not proven gameplay captures of this build (ASSETS_SOURCE=' + a.src + ')');
+    }
+    if (!SDK_GATE.skipped && !SDK_GATE.ok) reasons.push('SDK not detected in the build: ' + SDK_GATE.reason);
+    const reason = reasons.join(' AND ');
     log('');
     log('======================================================================');
     log('🚫 SUBMIT FOR REVIEW BLOCKED — ' + reason);
     log('======================================================================');
-    log('Rule: NEVER submit a game with self-made/fallback assets.');
+    log('Rule: assets MUST be real gameplay captures, and the SDK must be provably integrated.');
     log('Everything else was completed. The game is NOT submitted for review.');
-    log('To finish: generate REAL AI assets, then re-run this script (it is idempotent):');
-    log('  python3 gen_assets.py --prompt "<visual description of the game>" \\');
-    log('    --out-dir <dir containing icon_256.png / cover_1360x850.png>');
-    log('  # retry later if the HF quota is exhausted (rolling window), or use another IP / HF_TOKEN');
+    if (a && a.src !== ASSET_SOURCE_OK) {
+      log('To fix the assets, run the capture pipeline on this very zip, then re-run publish.js:');
+      log('  xvfb-run -a node scripts/capture_assets.js --zip "' + (CFG.zip || '<build.zip>') + '" \\');
+      log('    --out-dir <dir containing icon_256.png / cover_1360x850.png>');
+    }
+    if (!SDK_GATE.skipped && !SDK_GATE.ok) {
+      log('To fix the SDK: edit index.html in the zip — load');
+      log('  https://integration.gamepix.com/sdk/v3/gamepix.sdk.js as the FIRST script in <head>,');
+      log('  and call GamePix.loaded() once the game is playable (SKILL.md §2). Re-zip and re-run.');
+    }
     await page.screenshot({ path: path.join(__dirname, 'gpx_not_submitted_' + ns + '.png'), fullPage: true });
     await ctx.storageState({ path: CFG.sessionFile });
     return false;
   }
-  if (a) log('Asset provenance OK (ASSETS_SOURCE=' + a.src + ')');
+  if (a) log('Asset provenance OK (ASSETS_SOURCE=' + a.src + ' = real gameplay capture)');
   return true;
+}
+
+// ---------- SDK-IN-BUILD VERIFICATION GATE --------------------------------
+// QA rejection: '"SDK Integration" option is flagged but the SDK is not
+// integrated.' The checkbox is therefore only ticked when the ACTUAL zip
+// provably contains the SDK as the FIRST script in <head> of index.html.
+function verifySdkInZip(zipPath) {
+  const { execFileSync } = require('child_process');
+  const os = require('os');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gpxsdk-'));
+  let html;
+  try {
+    try {
+      execFileSync('unzip', ['-o', '-q', zipPath, 'index.html', '-d', tmp], { stdio: 'pipe' });
+    } catch (e) {
+      execFileSync('python3', ['-c',
+        'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); z.extract("index.html", sys.argv[2])',
+        zipPath, tmp], { stdio: 'pipe' });
+    }
+    html = fs.readFileSync(path.join(tmp, 'index.html'), 'utf8');
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return { ok: false, reason: 'could not read index.html from the zip (' + e.message + ')' };
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  const head = (html.slice(0, html.search(/<\/head\s*>/i)) || '').toLowerCase();
+  const scripts = Array.from(head.matchAll(/<script\b[^>]*src=["']([^"']+)["'][^>]*>/gi)).map((m) => m[1]);
+  const sdkIdx = scripts.findIndex((s) => /gamepix\.sdk\.js/i.test(s));
+  if (sdkIdx < 0) return { ok: false, reason: 'gamepix.sdk.js NOT referenced in <head> of the zip index.html' };
+  if (!/integration\.gamepix\.com\/sdk\/v3\/gamepix\.sdk\.js/i.test(scripts[sdkIdx])) {
+    return { ok: false, reason: 'SDK script found but not the v3 integration URL: ' + scripts[sdkIdx] };
+  }
+  if (sdkIdx !== 0) return { ok: false, reason: 'SDK is script #' + (sdkIdx + 1) + ' in <head> — GamePix requires it as the FIRST script' };
+  if (!/gpxtemplate|gamepix/i.test((html.match(/<body[^>]*>([\s\S]*)$/) || [''])[1].slice(-4000))) {
+    // body may still be fine (runtime calls live in other files) — non-blocking
+    log('NOTE: no GamePix reference found in the tail of inline index.html body (SDK calls may live in bundled game files)');
+  }
+  return { ok: true };
 }
 
 function reportNotSubmitted(ns) {
@@ -339,12 +396,30 @@ async function main() {
     await page.waitForTimeout(800);
   }
 
-  // 2e. SDK integration
+  // 2e. SDK integration — only flag it if the ZIP provably integrates the SDK.
+  // (QA rejection: "SDK Integration option is flagged but the SDK is not integrated.")
+  if (CFG.zip && fs.existsSync(CFG.zip)) {
+    SDK_GATE = verifySdkInZip(CFG.zip);
+    if (!SDK_GATE.ok) {
+      log('⚠️  SDK verification FAILED on ' + path.basename(CFG.zip) + ': ' + SDK_GATE.reason);
+      log('   The sdkIntegration checkbox will NOT be flagged, and Submit will be BLOCKED.');
+      log('   Fix the zip first: SKILL.md §2 — SDK must be the FIRST script in <head>.');
+    }
+  } else {
+    log('NOTE: no GPX_ZIP provided — cannot verify SDK inside the build.');
+  }
   const sdkChecked = await page.evaluate(() => {
     const c = document.querySelector('ion-checkbox[name="sdkIntegration"]');
     return c ? c.classList.contains('checkbox-checked') : null;
   });
-  if (!sdkChecked) { await page.locator('ion-checkbox[name="sdkIntegration"]').click(); await page.waitForTimeout(800); }
+  if (!SDK_GATE.skipped && SDK_GATE.ok && !sdkChecked) {
+    await page.locator('ion-checkbox[name="sdkIntegration"]').click();
+    await page.waitForTimeout(800);
+  } else if (!SDK_GATE.skipped && !SDK_GATE.ok && sdkChecked) {
+    await page.locator('ion-checkbox[name="sdkIntegration"]').click();
+    await page.waitForTimeout(800);
+    log('Unchecked sdkIntegration (build fails SDK verification).');
+  }
 
   // 2f. Save (enabled ion-button named Save)
   await page.evaluate(() => {

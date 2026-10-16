@@ -12,6 +12,68 @@
   if (typeof window === 'undefined') return;
   if (window.PokiSDK && window.PokiSDK.__gpxBridge) return;
 
+  /* ---------- AUDIO-SAFE AD SHIM ------------------------------------------
+   * QA hard rule: NO game audio may be audible while an ad (interstitial OR
+   * rewarded) plays. The game itself cannot be trusted to pause its audio,
+   * so the bridge holds it: every AudioContext (tracked by wrapping the
+   * constructor at load time, BEFORE any game code runs) and every currently
+   * playing <audio>/<video> element is suspended/paused for the whole break,
+   * then exactly what was active is restored afterwards.
+   */
+  var audioShim = (function () {
+    var ctxs = [];        // live AudioContexts
+    var pausedMedia = []; // [{el}] media elements paused for the ad
+    function track(ctx) { if (ctx && ctxs.indexOf(ctx) < 0) ctxs.push(ctx); }
+    try {
+      if (window.AudioContext) {
+        var Base = window.AudioContext;
+        function Tracked() {
+          var c = new (Function.prototype.bind.apply(Base, [null].concat([].slice.call(arguments))))();
+          track(c); return c;
+        }
+        Tracked.prototype = Base.prototype;
+        window.AudioContext = Tracked;
+      }
+      if (window.webkitAudioContext) {
+        var WBase = window.webkitAudioContext;
+        function WTracked() {
+          var c = new (Function.prototype.bind.apply(WBase, [null].concat([].slice.call(arguments))))();
+          track(c); return c;
+        }
+        WTracked.prototype = WBase.prototype;
+        window.webkitAudioContext = WTracked;
+      }
+    } catch (e) { /* tracking unavailable: nothing extra to suspend */ }
+    return {
+      suspendAll: function () {
+        for (var i = 0; i < ctxs.length; i++) {
+          try {
+            var c = ctxs[i];
+            if (c && typeof c.suspend === 'function' && c.state === 'running') { c.__gpxWasRunning = true; c.suspend(); }
+          } catch (e) {}
+        }
+        var els = [];
+        try { els = document.querySelectorAll('audio, video'); } catch (e) {}
+        for (var j = 0; j < els.length; j++) {
+          try {
+            var el = els[j];
+            if (el && !el.paused) { pausedMedia.push({ el: el }); el.pause(); }
+          } catch (e) {}
+        }
+      },
+      resumeAll: function () {
+        for (var k = 0; k < ctxs.length; k++) {
+          try {
+            var c = ctxs[k];
+            if (c && c.__gpxWasRunning && typeof c.resume === 'function') { c.__gpxWasRunning = false; c.resume(); }
+          } catch (e) {}
+        }
+        for (var m = 0; m < pausedMedia.length; m++) { try { pausedMedia[m].el.play(); } catch (e) {} }
+        pausedMedia = [];
+      }
+    };
+  })();
+
   function gpx() { return (typeof window.GamePix === 'object' && window.GamePix) || null; }
   function markLoaded() {
     var g = gpx();
@@ -46,11 +108,12 @@
     gameplayStart: function () {},
     gameplayStop: function () {},
 
-    /* Interstitial: pause is handled by the game itself during the break. */
+    /* Interstitial: the bridge itself holds the audio for the whole break. */
     commercialBreak: function () {
+      audioShim.suspendAll();
       return new Promise(function (resolve) {
         var done = false;
-        var fin = function () { if (!done) { done = true; resolve(); } };
+        var fin = function () { if (!done) { done = true; audioShim.resumeAll(); resolve(); } };
         var g = gpx();
         try {
           if (g && typeof g.interstitialAd === 'function') {
@@ -61,11 +124,13 @@
       });
     },
 
-    /* Rewarded: resolve({success:true}) only when the ad was fully watched. */
+    /* Rewarded: resolve({success:true}) only when the ad was fully watched.
+       Audio is held by the bridge for the whole break (QA hard rule). */
     rewardedBreak: function () {
+      audioShim.suspendAll();
       return new Promise(function (resolve) {
         var done = false;
-        var fin = function (ok) { if (!done) { done = true; resolve({ success: !!ok }); } };
+        var fin = function (ok) { if (!done) { done = true; audioShim.resumeAll(); resolve({ success: !!ok }); } };
         var g = gpx();
         try {
           if (g && typeof g.rewardAd === 'function') {

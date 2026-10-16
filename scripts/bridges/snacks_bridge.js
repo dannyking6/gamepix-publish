@@ -14,6 +14,66 @@
   if (typeof window === "undefined") return;
   if (window.GameSnacks && window.GameSnacks.__gpxBridge) return;
 
+  /* ------- AUDIO-SAFE AD SHIM (identical to poki_bridge.js) -------
+   * QA hard rule: NO game audio while an ad plays. The bridge must not rely
+   * on the game pausing itself: it tracks every AudioContext (wrapped ctor,
+   * loaded BEFORE any game code) and playing <audio>/<video> elements, and
+   * holds them for the entire ad break (reward AND interstitial).
+   */
+  var audioShim = (function () {
+    var ctxs = [];
+    var pausedMedia = [];
+    function track(ctx) { if (ctx && ctxs.indexOf(ctx) < 0) ctxs.push(ctx); }
+    try {
+      if (window.AudioContext) {
+        var Base = window.AudioContext;
+        function Tracked() {
+          var c = new (Function.prototype.bind.apply(Base, [null].concat([].slice.call(arguments))))();
+          track(c); return c;
+        }
+        Tracked.prototype = Base.prototype;
+        window.AudioContext = Tracked;
+      }
+      if (window.webkitAudioContext) {
+        var WBase = window.webkitAudioContext;
+        function WTracked() {
+          var c = new (Function.prototype.bind.apply(WBase, [null].concat([].slice.call(arguments))))();
+          track(c); return c;
+        }
+        WTracked.prototype = WBase.prototype;
+        window.webkitAudioContext = WTracked;
+      }
+    } catch (e) { /* fall through: nothing extra to suspend */ }
+    return {
+      suspendAll: function () {
+        for (var i = 0; i < ctxs.length; i++) {
+          try {
+            var c = ctxs[i];
+            if (c && typeof c.suspend === "function" && c.state === "running") { c.__gpxWasRunning = true; c.suspend(); }
+          } catch (e) {}
+        }
+        var els = [];
+        try { els = document.querySelectorAll("audio, video"); } catch (e) {}
+        for (var j = 0; j < els.length; j++) {
+          try {
+            var el = els[j];
+            if (el && !el.paused) { pausedMedia.push({ el: el }); el.pause(); }
+          } catch (e) {}
+        }
+      },
+      resumeAll: function () {
+        for (var k = 0; k < ctxs.length; k++) {
+          try {
+            var c = ctxs[k];
+            if (c && c.__gpxWasRunning && typeof c.resume === "function") { c.__gpxWasRunning = false; c.resume(); }
+          } catch (e) {}
+        }
+        for (var m = 0; m < pausedMedia.length; m++) { try { pausedMedia[m].el.play(); } catch (e) {} }
+        pausedMedia = [];
+      }
+    };
+  })();
+
   var TAG = "[GPXBridge]";
   function log() { try { console.debug.apply(console, [TAG].concat([].slice.call(arguments))); } catch (e) {} }
   function fn(f) { return typeof f === "function" ? f : null; }
@@ -102,6 +162,7 @@
         var done = false;
         var finish = function (status) {
           if (done) return; done = true;
+          audioShim.resumeAll();
           var a = fn(opts.afterAd); if (a) { try { a(); } catch (e) {} }
           var d = fn(opts.adBreakDone);
           if (d) { try { d({ breakStatus: status, type: opts.type || "next" }); } catch (e) {} }
@@ -111,6 +172,9 @@
 
         var beforeAd = fn(opts.beforeAd);
         if (beforeAd) { try { beforeAd(); } catch (e) {} }
+
+        // The bridge, not the game, holds the audio for the whole break.
+        audioShim.suspendAll();
 
         var g = gpx();
         try {

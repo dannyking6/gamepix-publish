@@ -3,3 +3,7 @@ __pycache__/
 *.tmp
 .gen_tmp
 .hf_token
+node_modules/
+.gpx_session.json
+gpx_published.png
+gpx_not_submitted_*.png

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate GamePix-compliant assets with FREE AI image generation (NO account needed).
+"""EMERGENCY FALLBACK ONLY — Generate GamePix-compliant assets with FREE AI image
+
+generation (NO account needed). Use capture_assets.js FIRST: it produces assets
+that are real captures of the game (impossible mismatch). AI generation guesses
+what the game looks like from a text description and FAILED QA 3 times because
+of it — only use this when no build is available to capture.
 
 Method: anonymous Gradio API of Hugging Face Spaces running FLUX (Apache-2.0 / open).
 A plain POST + SSE read gives an image URL; no signup, no API key. Validated Sept 2026.
@@ -23,8 +28,10 @@ Rules enforced:
     exceeds the limit it is re-encoded as JPEG (also accepted by GamePix).
   - If all AI attempts fail (space down, quota exhausted, network), falls back to the
     PIL-drawn text-free assets from make_assets.py, and writes ASSETS_SOURCE=assets_pil_fallback.
-    NON-AI (fallback) assets must NEVER be submitted for review — publish.js enforces this:
-    complete everything else, but do NOT click Submit; ask for real AI assets instead.
+  - BOTH non-capture asset sources are blocked at Submit by publish.js: the accepted
+    provenance is assets_gameplay_capture (scripts/capture_assets.js) — real screenshots
+    of the build being submitted. AI assets were rejected 3 times by GamePix QA because
+    they did not correspond to the tested game.
 
 Usage:
   pip install pillow   # only for post-processing + fallback
@@ -84,13 +91,24 @@ SPACES = [
 ]
 
 # Banned-content suffix: GamePix assets must carry NO text/names/branding.
+# QA ALSO REJECTS rounded-corner icons: the artwork must fill the frame
+# edge-to-edge ("full bleed", hard 90° corners). Saying "app icon style" makes
+# FLUX draw an iOS squircle — a real QA rejection.
+#
+# NOTE: AI generation is now the FALLBACK path only. The primary pipeline is
+# capture_assets.js (real gameplay captures of the very build submitted) —
+# QA rejected games whose AI assets "did not correspond to the game tested".
 NO_TEXT = ("no text, no letters, no words, no numbers, no typography, no logo, "
-           "no watermark, no signature, no border frame")
+           "no watermark, no signature, no rounded corners, no iOS app icon shape, "
+           "no squircle, no frame, no border, artwork fills the entire image "
+           "edge to edge with hard square corners")
 
-ICON_PROMPT = ("app icon style illustration: {p}, single centered subject, "
-               "simple uncluttered background, bold shapes, vibrant colors, high contrast, {n}")
-COVER_PROMPT = ("wide landscape game cover art: {p}, dynamic full scene, detailed "
-                "background, cinematic lighting, vibrant colors, {n}")
+ICON_PROMPT = ("full-bleed square illustration, edge-to-edge composition: {p}, "
+               "single centered subject, simple uncluttered background, bold shapes, "
+               "vibrant colors, high contrast, {n}")
+COVER_PROMPT = ("wide landscape game cover art, full-bleed edge-to-edge: {p}, "
+                "dynamic full scene, detailed background, cinematic lighting, "
+                "vibrant colors, {n}")
 
 ICON_MAX = 1 * 1024 * 1024      # 1MB
 COVER_MAX = 1536 * 1024         # 1.5MB
@@ -215,6 +233,26 @@ def fit(path_in: str, path_out: str, w: int, h: int, max_bytes: int) -> str:
     return path_out
 
 
+def corners_are_square(path: str, probe: int = 6, tol: int = 40) -> bool:
+    """QA rule: corners must be FULL and square (no rounded crop, no squircle).
+    Probe corner pixels: opaque, and pixel-continuous with adjacent edge pixels."""
+    from PIL import Image
+    img = Image.open(path).convert("RGBA")
+    w, h = img.size
+    pts = {"tl": (0, 0), "tr": (w - 1, 0), "bl": (0, h - 1), "br": (w - 1, h - 1)}
+    for name, (x, y) in pts.items():
+        r, g, b, a = img.getpixel((x, y))
+        if a < 250:
+            return False
+        for dx, dy in ((probe, 0), (0, probe)):
+            x2 = min(max(x + dx * (1 if x < w // 2 else -1), 0), w - 1)
+            y2 = min(max(y + dy * (1 if y < h // 2 else -1), 0), h - 1)
+            r2, g2, b2, _ = img.getpixel((x2, y2))
+            if max(abs(r - r2), abs(g - g2), abs(b - b2)) > tol:
+                return False
+    return True
+
+
 def fallback_pil(out_dir: str) -> tuple[str, str]:
     """Last-resort text-free assets so publishing never blocks (make_assets.py)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -245,13 +283,23 @@ def main() -> None:
     ai_ok = False
     try:
         print("[1/4] Generating icon (1024x1024)...")
-        try:
-            url = gen_image(icon_p, 1024, 1024, args.seed, args.retries)
-            download(url, tmp)
-        except Exception as hf_err:  # noqa: BLE001
-            print(f"  HF Spaces unavailable ({hf_err}) — trying Pollinations (FLUX, keyless)...")
-            pollinations_image(icon_p, 1024, 1024, args.seed, tmp)
-        icon = fit(tmp, os.path.join(args.out_dir, "icon_256.png"), 256, 256, ICON_MAX)
+        # up to 3 rounds with fresh seeds: rounded/cut corners are auto-rejected (QA)
+        icon = None
+        for attempt in range(3):
+            seed = args.seed + attempt * 7919
+            try:
+                url = gen_image(icon_p, 1024, 1024, seed, args.retries)
+                download(url, tmp)
+            except Exception as hf_err:  # noqa: BLE001
+                print(f"  HF Spaces unavailable ({hf_err}) — trying Pollinations (FLUX, keyless)...")
+                pollinations_image(icon_p, 1024, 1024, seed, tmp)
+            cand = fit(tmp, os.path.join(args.out_dir, "icon_256.png"), 256, 256, ICON_MAX)
+            if corners_are_square(cand):
+                icon = cand
+                break
+            print(f"  attempt {attempt + 1}/3: rounded/cut corners detected — regenerating with a new seed (QA auto-reject)")
+        if icon is None:
+            raise RuntimeError("icon corners are rounded/cut after 3 attempts (QA auto-reject)")
 
         print("[2/4] Generating cover (1360x850)...")
         try:
@@ -276,11 +324,14 @@ def main() -> None:
     print(f"[3/4] icon  : {icon}  ({os.path.getsize(icon)} bytes, 256x256)")
     print(f"[4/4] cover : {cover}  ({os.path.getsize(cover)} bytes, 1360x850)")
     if ai_ok:
-        print("✅ Done — AI-generated, text-free, GamePix-compliant (ASSETS_SOURCE=assets_ai_generated).")
+        print("✅ Done — AI-generated, text-free, square corners (ASSETS_SOURCE=assets_ai_generated).")
+        print("⚠️  publish.js BLOCKS Submit on AI assets: QA rejected 3 games whose AI assets")
+        print("⚠️  did not match the tested game. Prefer real gameplay captures:")
+        print("⚠️    xvfb-run -a node scripts/capture_assets.js --zip build.zip --out-dir <dir>")
     else:
         print("⚠️  Done, but these are PIL FALLBACK assets (ASSETS_SOURCE=assets_pil_fallback).")
-        print("⚠️  NEVER submit a game with fallback assets: complete every other publish step, then")
-        print("⚠️  regenerate with real AI (retry later / other IP / HF_TOKEN) before Submit for review.")
+        print("⚠️  NEITHER fallback NOR AI assets may be submitted: produce real gameplay")
+        print("⚠️  captures of the very build submitted (capture_assets.js) before Submit.")
 
 
 if __name__ == "__main__":
