@@ -23,6 +23,7 @@
  *   --settle 6        seconds of active play to skip BEFORE capturing (menus die here)
  *   --frames 24       number of gameplay frames captured (default 24)
  *   --interval 900    ms between frames (default 900)
+ *   --title "My Game" game title rendered on the assets (must match game title)
  *
  * Requirements:
  *   npm i playwright && npx playwright install chromium     (run under xvfb on Linux)
@@ -226,14 +227,16 @@ async function autostart(page) {
   // ---- post-process: pick best gameplay frames, crop, enforce QA rules ----
   const pp = path.join(__dirname, 'capture_postprocess.py');
   log('post-processing frames with PIL...');
-  execFileSync('python3', [
+  const ppArgs = [
     pp, framesDir,
     '--out-dir', outDir,
     '--icon-size', '256',
     '--cover-size', '1360x850',
     '--max-icon-bytes', String(1 * 1024 * 1024),
     '--max-cover-bytes', String(1.5 * 1024 * 1024),
-  ], { stdio: 'inherit' });
+  ];
+  if (args.title) ppArgs.push('--title', args.title);
+  execFileSync('python3', ppArgs, { stdio: 'inherit' });
   log('✅ assets written to', outDir);
   if (tmpUnzip) { fs.rmSync(tmpUnzip, { recursive: true, force: true }); }
 })().catch((e) => { console.error('[CAPTURE][ERR]', e); process.exit(1); });

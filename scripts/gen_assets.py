@@ -47,6 +47,8 @@ import time
 import urllib.request
 import urllib.error
 
+from PIL import Image, ImageDraw, ImageFont
+
 
 def _load_token() -> str:
     """HF token (raises ZeroGPU anonymous quota; free account, no payment needed).
@@ -264,11 +266,54 @@ def fallback_pil(out_dir: str) -> tuple[str, str]:
     return icon, cover
 
 
+def _font(size):
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def apply_title(path, title, max_bytes):
+    """Overlay the game title on an asset (per GamePix guideline: title on assets
+    must match the game's title)."""
+    if not title:
+        return
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    draw = ImageDraw.Draw(img)
+    for size in range(int(w * 0.09), 8, -1):
+        font = _font(size)
+        bb = draw.textbbox((0, 0), title, font=font)
+        if (bb[2] - bb[0]) <= w - 24:
+            break
+    bb = draw.textbbox((0, 0), title, font=font)
+    tw = bb[2] - bb[0]
+    th = bb[3] - bb[1]
+    x = (w - tw) // 2
+    y = h - th - max(8, int(h * 0.05))
+    for dx in (-2, -1, 0, 1, 2):
+        for dy in (-2, -1, 0, 1, 2):
+            if dx == 0 and dy == 0:
+                continue
+            draw.text((x + dx, y + dy), title, font=font, fill=(0, 0, 0))
+    draw.text((x, y), title, font=font, fill=(255, 255, 255))
+    img.save(path, optimize=True)
+    if os.path.getsize(path) > max_bytes:
+        img.save(path, "JPEG", quality=88, optimize=True)
+    if os.path.getsize(path) > max_bytes:
+        raise RuntimeError(f"{path} is {os.path.getsize(path)} bytes (> {max_bytes})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="AI game assets (icon+cover), no account needed")
     ap.add_argument("--prompt", required=True,
-                    help="VISUAL description of the game (no text to render!)")
+                    help="VISUAL description of the game (title is overlaid separately via --title)")
     ap.add_argument("--out-dir", default=".")
+    ap.add_argument("--title", default="",
+                    help="Game title rendered on the assets (must match game title)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--retries", type=int, default=4, help="rounds over all spaces")
     ap.add_argument("--no-fallback", action="store_true",
@@ -319,6 +364,11 @@ def main() -> None:
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+    if args.title:
+        apply_title(icon, args.title, ICON_MAX)
+        apply_title(cover, args.title, COVER_MAX)
+        print("title rendered:", args.title)
 
     write_source_marker(args.out_dir, ai_ok)
     print(f"[3/4] icon  : {icon}  ({os.path.getsize(icon)} bytes, 256x256)")

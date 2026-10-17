@@ -131,7 +131,7 @@ SDK error strings: `GAMEPIX_LOADED_NOT_CALLED`, `LOADED_ALREADY_CALLED`, `UPDATE
 - ZIP zipped at FILE level: `index.html` at archive root (not inside a folder). Accepts `.zip` (or `.gpx` from the Unity plugin).
 - All resources relative paths; no external links/analytics/ads/third-party SDKs; no `alert`/`confirm`; no "Rotate device" prompt; no quit button; no religious/explicit content.
 - Pause game AND audio during ads and on `visibilitychange` (the bridges do this automatically — see §2a; else implement pauseAudio/resumeAudio yourself); every rewarded surface (bonus button) must actually call `GamePix.rewardAd()` and honour `res.success`; iframe-friendly at 640×480; `<meta name="viewport" content="...user-scalable=NO...">`; `touch-action:none` on body.
-- Assets: icon **256×256** (≤1MB), cover **1360×850** (≤1.5MB), JPG/PNG, and **NO text/names/logos on assets**. They MUST be **REAL GAMEPLAY captures of the build being submitted** (`scripts/capture_assets.js`): full-bleed square corners (rounded corners are a QA auto-reject), gameplay frames only (never a menu/loading screen), no HUD text in the crop.
+- Assets: icon **256×256** (≤1MB), cover **1360×850** (≤1.5MB), JPG/PNG. Per the GamePix submission guidelines the **game title must appear on the assets and must match the game's title** (rendered by the pipeline via `--title`); no other text, logos or branding. They MUST be **REAL GAMEPLAY captures of the build being submitted** (`scripts/capture_assets.js --title "<GPX_TITLE>"`): full-bleed square corners (rounded corners are a QA auto-reject), gameplay frames only (never a menu/loading screen), no HUD text in the crop.
 - **NEVER submit assets that are not proven gameplay captures** (see §5b — publish.js enforces this: AI-generated and PIL-fallback assets are blocked at Submit).
 - Description 100–500 chars, unique, no AI boilerplate; how-to-play ≤500 chars (controls first, Desktop/Mobile sections).
 - Keep the build small. One ad at a time, between levels only, never timer-based.
@@ -146,7 +146,8 @@ the zip, no text on the assets). Therefore:
   actually does (read the code, play the game first). Not off-topic, not
   generic ("My Game", "Untitled"), not a clone of a famous title.
 - The chosen title becomes `GPX_TITLE` (dashboard name + namespace slug) and
-  the zip filename stays internal. Assets stay text-free (§5) — the title
+  the zip filename stays internal. Assets carry the title (rendered via
+  --title, matching the dashboard title) per the GamePix guidelines; other text
   lives ONLY in the dashboard metadata.
 
 ## 4. Automated publishing via Playwright
@@ -200,7 +201,7 @@ npm i playwright && npx playwright install chromium   # run under xvfb on Linux
 pip install pillow
 
 xvfb-run -a node scripts/capture_assets.js \
-  --zip build.zip --out-dir ./assets --settle 8 --frames 24
+  --zip build.zip --out-dir ./assets --settle 8 --frames 24 --title "My Game"
 # -> assets/icon_256.png (256x256, <=1MB) + assets/cover_1360x850.png (1360x850, <=1.5MB)
 # -> ASSETS_SOURCE=assets_gameplay_capture (the ONLY provenance publish.js accepts)
 ```

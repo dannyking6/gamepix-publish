@@ -20,7 +20,7 @@ import argparse
 import os
 import sys
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ICON_MAX = 1 * 1024 * 1024
 COVER_MAX = 1536 * 1024
@@ -122,6 +122,48 @@ def pick_cover_frame(frames, used):
     return best
 
 
+def _font(size):
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def apply_title(path, title, max_bytes):
+    """Overlay the game title on an asset (per GamePix guideline: title on assets
+    must match the game's title). Text is drawn with a dark outline for legibility."""
+    if not title:
+        return
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    draw = ImageDraw.Draw(img)
+    # fit font size so the title fits with a small margin
+    for size in range(int(w * 0.09), 8, -1):
+        font = _font(size)
+        bb = draw.textbbox((0, 0), title, font=font)
+        if (bb[2] - bb[0]) <= w - 24:
+            break
+    bb = draw.textbbox((0, 0), title, font=font)
+    tw = bb[2] - bb[0]
+    th = bb[3] - bb[1]
+    x = (w - tw) // 2
+    y = h - th - max(8, int(h * 0.05))
+    for dx in (-2, -1, 0, 1, 2):
+        for dy in (-2, -1, 0, 1, 2):
+            if dx == 0 and dy == 0:
+                continue
+            draw.text((x + dx, y + dy), title, font=font, fill=(0, 0, 0))
+    draw.text((x, y), title, font=font, fill=(255, 255, 255))
+    img.save(path, optimize=True)
+    if os.path.getsize(path) > max_bytes:
+        img.save(path, "JPEG", quality=88, optimize=True)
+    if os.path.getsize(path) > max_bytes:
+        raise RuntimeError(f"{path} is {os.path.getsize(path)} bytes (> {max_bytes})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("frames_dir", help="directory of gameplay frames (png)")
@@ -130,6 +172,7 @@ def main():
     ap.add_argument("--cover-size", default="1360x850")
     ap.add_argument("--max-icon-bytes", type=int, default=ICON_MAX)
     ap.add_argument("--max-cover-bytes", type=int, default=COVER_MAX)
+    ap.add_argument("--title", default="", help="Game title rendered on the assets (must match game title)")
     ap.add_argument("--min-detail", type=float, default=0.05,
                     help="skip frames flatter than this (menus/loading)")
     ap.add_argument("--max-text", type=float, default=0.22,
@@ -179,6 +222,11 @@ def main():
     cover = crop_fullbleed(cover_img, cw, ch)
     save_within_limit(icon, icon_path, args.max_icon_bytes)
     save_within_limit(cover, cover_path, args.max_cover_bytes)
+
+    if args.title:
+        apply_title(icon_path, args.title, args.max_icon_bytes)
+        apply_title(cover_path, args.title, args.max_cover_bytes)
+        print("title rendered:", args.title)
 
     for p in (icon_path, cover_path):
         if not corners_square(p):

@@ -51,7 +51,7 @@ Generate compliant assets by **capturing REAL GAMEPLAY of the very build you sub
 
 ```bash
 pip install pillow
-xvfb-run -a node scripts/capture_assets.js --zip my-game-v1.0.0.zip --out-dir ./assets
+xvfb-run -a node scripts/capture_assets.js --zip my-game-v1.0.0.zip --out-dir ./assets --title "My Game"
 # -> assets/icon_256.png (256x256, <=1MB) + assets/cover_1360x850.png (1360x850, <=1.5MB)
 ```
 
@@ -80,7 +80,7 @@ xvfb-run -a node scripts/capture_assets.js --zip my-game-v1.0.0.zip --out-dir ./
 - `scripts/bridges/poki_bridge.js` — AD BRIDGE: PokiSDK games get REAL GamePix ads (commercialBreak→interstitialAd, rewardedBreak→rewardAd, happyTime→happyMoment) **+ audio-safe shim: bridges themselves suspend all AudioContexts and pause audio/video elements during every ad break**
 - `scripts/bridges/snacks_bridge.js` — AD BRIDGE: GameSnacks games get REAL GamePix ads (ad.break next/reward→interstitial/reward, score.update→updateScore, levelComplete→updateLevel+happyMoment, game.ready→loaded) **+ same audio-safe shim**
 - `scripts/gen_assets.py` — FALLBACK ONLY: FREE AI asset generator (FLUX via anonymous HF Spaces API, full-bleed prompts + square-corner check, writes the `ASSETS_SOURCE` provenance marker) — output blocked at Submit
-- `scripts/make_assets.py` — offline PIL fallback (also text-free; draft completion only — never submit with these)
+- `scripts/make_assets.py` — offline PIL fallback (renders the game title on the assets; draft completion only — never submit with these)
 
 ## REVIEW LOCK (important)
 
