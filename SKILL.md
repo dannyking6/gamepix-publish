@@ -137,18 +137,26 @@ SDK error strings: `GAMEPIX_LOADED_NOT_CALLED`, `LOADED_ALREADY_CALLED`, `UPDATE
 - Keep the build small. One ad at a time, between levels only, never timer-based.
 
 ### Game naming rule (IMPORTANT — read before publishing)
-The GitHub repo name / project folder name is just an **internal label** — the
-games shipped by this workflow carry **NO name inside the build** (no title in
-the zip, no text on the assets). Therefore:
-- **NEVER** blindly reuse the GitHub repo/folder name as the game title.
+The GitHub repo name / project folder name is just an **internal label** —
+the games shipped by this workflow carry **NO name inside the build** (no
+hard-coded title in the code). Therefore:
+- **NEVER** blindly reuse the GitHub repo/folder name, the original zip's
+  filename, or any name found inside the game, as the game title.
+- **Zip filename must match the submitted name.** If the build arrives as
+  `santarun.zip` (or any other name), the agent **must rename/align it** so
+  the submitted zip's name matches the chosen title (e.g. `santa-run.zip` /
+  `santa-run-v1.0.0.zip`). A mismatched zip name is not acceptable at submit.
+- **If the user provides no game name** (even if the original zip or the game
+  itself had one), the agent **must invent a fresh, catchy, on-topic title**
+  itself — never inherit the original name as-is. Read the code and play the
+  game first, then pick a title that reflects what the game actually does.
 - At publish time, the agent **chooses the game name itself**, right before
   going live: a fresh, catchy, **on-topic** title that reflects what the game
   actually does (read the code, play the game first). Not off-topic, not
   generic ("My Game", "Untitled"), not a clone of a famous title.
 - The chosen title becomes `GPX_TITLE` (dashboard name + namespace slug) and
-  the zip filename stays internal. Assets carry the title (rendered via
-  --title, matching the dashboard title) per the GamePix guidelines; other text
-  lives ONLY in the dashboard metadata.
+  the zip filename must match it. Assets carry the title via `--title` (§5) —
+  the title lives in the dashboard metadata AND on the assets.
 
 ## 4. Automated publishing via Playwright
 
