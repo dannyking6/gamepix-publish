@@ -126,6 +126,25 @@ window.addEventListener("wheel", e => e.preventDefault(), { passive: false });
 
 SDK error strings: `GAMEPIX_LOADED_NOT_CALLED`, `LOADED_ALREADY_CALLED`, `UPDATE_SCORE_VALUE_IS_NOT_A_NUMBER`, `UPDATE_LEVEL_VALUE_IS_NOT_A_NUMBER`, `LOADING_VALUE_IS_NOT_A_NUMBER`, `INTERSTITIAL_AD_CALLED_TWICE`, `REWARD_AD_CALLED_TWICE`, `KEY_OR_VALUE_FOR_LOCALSTORAGE_NOT_A_STRING`, `GAMEPIX_PLAYER_NOT_FOUND`.
 
+## 2b. Neutralize sitelocks & external analytics (MANDATORY)
+
+Portal games frequently ship sitelocks and telemetry that break on a new host.
+Before packaging, the AI must:
+
+- **Sitelocks / domain checks**: grep the whole build for `location.host`,
+  `location.hostname`, `document.domain` and whitelist arrays; neutralize them
+  (patch bytes with identical-length replacements, or short-circuit from the
+  driver). A game that refuses to run on the target domain is a FAILED build.
+- **External analytics / telemetry**: remove or redirect Sentry, Google
+  Analytics, DDNA, Google Fonts, A/B test fetches, social-share `img` beacons
+  and any third-party `<script>`/`<link>`. Only local files may remain.
+  Verify with the firewall test (Phase 3 of the offliner pipeline) that zero
+  non-localhost requests are made.
+- **Service worker**: Construct/Cocos/Unity exports register a service worker
+  whose cached responses hide real bodies. Block or remove the SW registration
+  so capture and Playwright see the real files (`serviceWorkers: 'block'`).
+- **Check**: `grep -rniE "location\.host|sentry|google-analytics|googletagmanager|fonts\.googleapis" <build>` must return 0 hits (aside from the SDK you intentionally integrate).
+
 ## 3. Compliance checklist (review will fail otherwise)
 
 - ZIP zipped at FILE level: `index.html` at archive root (not inside a folder). Accepts `.zip` (or `.gpx` from the Unity plugin).
