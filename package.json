@@ -4,7 +4,8 @@
   "description": "AI-agent skill: integrate GamePix SDK and publish any HTML5 game end-to-end on my.gamepix.com",
   "private": true,
   "scripts": {
-    "publish": "node scripts/publish.js"
+    "publish": "node scripts/publish.js",
+    "verify-clean": "node scripts/verify_clean.js"
   },
   "dependencies": {
     "playwright": "^1.64.1"

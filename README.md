@@ -81,6 +81,7 @@ xvfb-run -a node scripts/capture_assets.js --zip my-game-v1.0.0.zip --out-dir ./
 - `scripts/bridges/snacks_bridge.js` — AD BRIDGE: GameSnacks games get REAL GamePix ads (ad.break next/reward→interstitial/reward, score.update→updateScore, levelComplete→updateLevel+happyMoment, game.ready→loaded) **+ same audio-safe shim**
 - `scripts/gen_assets.py` — FALLBACK ONLY: FREE AI asset generator (FLUX via anonymous HF Spaces API, full-bleed prompts + square-corner check, writes the `ASSETS_SOURCE` provenance marker) — output blocked at Submit
 - `scripts/make_assets.py` — offline PIL fallback (renders the game title on the assets; draft completion only — never submit with these)
+- `scripts/verify_clean.js` — verifies a build is fully cleaned of its origin: no source platform name (Poki, Softgames, Construct, Phaser, PixiJS, Unity, Godot, Famobi, …) and no original game name may appear in any shipped file (contents or file names). Exits 0 only on a clean build; run before submit (`npm run verify-clean -- <build-dir> <platform> <original-name>`).
 
 ## REVIEW LOCK (important)
 

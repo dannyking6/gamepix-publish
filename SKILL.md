@@ -158,6 +158,26 @@ hard-coded title in the code). Therefore:
   the zip filename must match it. Assets carry the title via `--title` (§5) —
   the title lives in the dashboard metadata AND on the assets.
 
+### Build cleaning rule (MANDATORY — 0 in-game hits)
+The build shipped to GamePix must be **fully cleaned of its origin**: neither
+the source platform name (whatever it is: Poki, Softgames, Construct, Phaser,
+PixiJS, Unity, Godot, Famobi, GameSnacks, …) nor the original game name may
+appear anywhere inside the shipped build — code, assets, atlases, manifests,
+metadata, strings, URLs, file names. A partial clean is a FAILED build.
+
+- **Repo/folder name is NOT the game title** (see above) and is also NOT proof
+  of cleanliness — the build must be scrubbed regardless of the folder name.
+- The original game name is **not** the repo name or the Pages URL for this
+  workflow: the build simply carries **no name at all** inside it; the title
+  is chosen fresh at publish time and lives only in the GamePix dashboard,
+  the zip filename and the assets.
+- Verify before submit with the provided test:
+  `node scripts/verify_clean.js <build-dir> <platform-name> <original-game-name>`
+  (add any extra terms as further args). It exits 0 only when every term has
+  0 hits in both file contents and file names; otherwise it prints the
+  offending files/lines and exits 1. Run it in CI/pre-submit; a non-zero exit
+  blocks submission.
+
 ## 4. Automated publishing via Playwright
 
 Full working implementation: `scripts/publish.js` (this repo). Usage:
