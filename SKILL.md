@@ -196,6 +196,14 @@ metadata, strings, URLs, file names. A partial clean is a FAILED build.
   0 hits in both file contents and file names; otherwise it prints the
   offending files/lines and exits 1. Run it in CI/pre-submit; a non-zero exit
   blocks submission.
+- **SDK surface names (exception)**: functional identifiers required by a
+  bridge (`PokiSDK.*` in `poki_bridge.js` / `snacks_bridge.js` /
+  `game-driver.js`) are NOT branding — `verify_clean.js` skips these files
+  by default. To reach a true 0 hits everywhere, rename the surface
+  consistently across the game AND the bridge (`PokiSDK` → `GameDriver`), as
+  the offliner pipeline does — but this requires editing the generated
+  Construct files and risks breaking the ad mapping. Pick one approach and
+  document it; never leave stray platform strings in assets/metadata/text.
 
 ## 4. Automated publishing via Playwright
 

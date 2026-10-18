@@ -39,6 +39,9 @@ if (!fs.existsSync(buildDir) || !fs.statSync(buildDir).isDirectory()) {
 }
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.DS_Store']);
+// Functional SDK surface files: these intentionally keep platform SDK names
+// (e.g. PokiSDK) to map calls onto the target platform. They are NOT branding.
+const SKIP_FILES = new Set(['poki_bridge.js', 'snacks_bridge.js', 'game-driver.js']);
 const SKIP_EXT = new Set(['.png','.jpg','.jpeg','.webp','.gif','.ico','.woff','.woff2','.ttf','.otf','.wasm','.pck','.mp3','.ogg','.wav','.webm','.m4a','.mp4','.zip','.gpx']);
 
 function walk(dir) {
@@ -54,6 +57,7 @@ function walk(dir) {
 
 const offenders = [];
 for (const file of walk(buildDir)) {
+  if (SKIP_FILES.has(path.basename(file))) continue;
   const rel = path.relative(buildDir, file);
   // check file name itself
   const base = path.basename(file).toLowerCase();
