@@ -122,9 +122,21 @@ def pick_cover_frame(frames, used):
     return best
 
 
+FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+]
 def _font(size):
-    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
+    for p in FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    # try bundled Nunito-Black if present
+    for p in ("/tmp/opencode/blumgi-bounce/fonts/Nunito-Black.ttf",):
         try:
             return ImageFont.truetype(p, size)
         except Exception:
@@ -132,34 +144,112 @@ def _font(size):
     return ImageFont.load_default()
 
 
+def _wrap_title(title, draw, font, max_width):
+    """Wrap the title into at most 2 balanced lines if it is too wide."""
+    words = title.split()
+    if len(words) <= 1:
+        return [title]
+    # try single line first
+    bb = draw.textbbox((0, 0), title, font=font)
+    if (bb[2] - bb[0]) <= max_width:
+        return [title]
+    # greedy wrap into 2 lines, balancing widths
+    best = None
+    for i in range(1, len(words)):
+        line1 = " ".join(words[:i])
+        line2 = " ".join(words[i:])
+        b1 = draw.textbbox((0, 0), line1, font=font)
+        b2 = draw.textbbox((0, 0), line2, font=font)
+        w1 = b1[2] - b1[0]; w2 = b2[2] - b2[0]
+        if w1 <= max_width and w2 <= max_width:
+            best = ([line1, line2], max(w1, w2))
+            break
+    if best is None:
+        # fall back to 2 lines split in the middle
+        mid = len(words) // 2
+        return [" ".join(words[:mid]), " ".join(words[mid:])]
+    return best[0]
+
+
 def apply_title(path, title, max_bytes):
-    """Overlay the game title on an asset (per GamePix guideline: title on assets
-    must match the game's title). Text is drawn with a dark outline for legibility."""
+    """Overlay a polished game title on an asset (per GamePix guideline: title on
+    assets must match the game's title). Renders a subtle dark band + drop
+    shadow + thick outline + bright fill for a premium, legible look."""
     if not title:
         return
-    img = Image.open(path).convert("RGB")
-    w, h = img.size
-    draw = ImageDraw.Draw(img)
-    # fit font size so the title fits with a small margin
-    for size in range(int(w * 0.09), 8, -1):
+    base = Image.open(path).convert("RGBA")
+    w, h = base.size
+
+    # 1) fit font size for the (possibly wrapped) title
+    max_text_width = int(w * 0.92)
+    for size in range(int(w * 0.11), 9, -1):
         font = _font(size)
-        bb = draw.textbbox((0, 0), title, font=font)
-        if (bb[2] - bb[0]) <= w - 24:
+        tmp = ImageDraw.Draw(base)
+        lines = _wrap_title(title, tmp, font, max_text_width)
+        widths = [tmp.textbbox((0, 0), ln, font=font)[2] - tmp.textbbox((0, 0), ln, font=font)[0] for ln in lines]
+        heights = [tmp.textbbox((0, 0), ln, font=font)[3] - tmp.textbbox((0, 0), ln, font=font)[1] for ln in lines]
+        total_h = sum(heights) + (len(lines) - 1) * int(size * 0.25)
+        if max(widths) <= max_text_width and total_h <= int(h * 0.28):
             break
-    bb = draw.textbbox((0, 0), title, font=font)
-    tw = bb[2] - bb[0]
-    th = bb[3] - bb[1]
-    x = (w - tw) // 2
-    y = h - th - max(8, int(h * 0.05))
-    for dx in (-2, -1, 0, 1, 2):
-        for dy in (-2, -1, 0, 1, 2):
-            if dx == 0 and dy == 0:
-                continue
-            draw.text((x + dx, y + dy), title, font=font, fill=(0, 0, 0))
-    draw.text((x, y), title, font=font, fill=(255, 255, 255))
-    img.save(path, optimize=True)
+    else:
+        font = _font(10)
+        lines = _wrap_title(title, ImageDraw.Draw(base), font, max_text_width)
+    tmp = ImageDraw.Draw(base)
+    widths = [tmp.textbbox((0, 0), ln, font=font)[2] - tmp.textbbox((0, 0), ln, font=font)[0] for ln in lines]
+    heights = [tmp.textbbox((0, 0), ln, font=font)[3] - tmp.textbbox((0, 0), ln, font=font)[1] for ln in lines]
+    line_gap = int(font.size * 0.22)
+    total_h = sum(heights) + (len(lines) - 1) * line_gap
+    max_tw = max(widths)
+
+    # 2) position: bottom-center with a margin
+    margin_x = int(w * 0.04)
+    margin_y = int(h * 0.06)
+    band_pad_x = int(w * 0.06)
+    band_pad_y = int(h * 0.03)
+    band_w = max_tw + band_pad_x * 2
+    band_h = total_h + band_pad_y * 2
+    band_x0 = (w - band_w) // 2
+    band_y0 = h - band_h - margin_y
+    band_x1 = band_x0 + band_w
+    band_y1 = band_y0 + band_h
+
+    # 3) composite a semi-transparent dark rounded band
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    radius = int(h * 0.025)
+    od.rounded_rectangle((band_x0, band_y0, band_x1, band_y1), radius=radius, fill=(0, 0, 0, 150))
+    base = Image.alpha_composite(base, overlay)
+
+    # 4) draw text: drop shadow + thick outline + bright fill
+    draw = ImageDraw.Draw(base)
+    # vertical start of text block inside band
+    ty = band_y0 + band_pad_y
+    shadow_off = max(2, int(font.size * 0.06))
+    outline = max(2, int(font.size * 0.08))
+    for ln, lh in zip(lines, heights):
+        bb = draw.textbbox((0, 0), ln, font=font)
+        tw = bb[2] - bb[0]
+        x = (w - tw) // 2
+        # drop shadow
+        draw.text((x + shadow_off, ty + shadow_off), ln, font=font, fill=(0, 0, 0, 200))
+        # outline
+        for dx in range(-outline, outline + 1):
+            for dy in range(-outline, outline + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if dx * dx + dy * dy > outline * outline:
+                    continue
+                draw.text((x + dx, ty + dy), ln, font=font, fill=(0, 0, 0, 255))
+        # main fill (bright white) + subtle golden tint on top line for flair
+        fill = (255, 255, 255, 255)
+        draw.text((x, ty), ln, font=font, fill=fill)
+        ty += lh + line_gap
+
+    # 5) save, converting back to RGB (JPEG/PNG)
+    out = base.convert("RGB")
+    out.save(path, optimize=True)
     if os.path.getsize(path) > max_bytes:
-        img.save(path, "JPEG", quality=88, optimize=True)
+        out.save(path, "JPEG", quality=88, optimize=True)
     if os.path.getsize(path) > max_bytes:
         raise RuntimeError(f"{path} is {os.path.getsize(path)} bytes (> {max_bytes})")
 
